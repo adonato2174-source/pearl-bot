@@ -1,0 +1,23 @@
+name: Build Pearl Miner Image
+
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Build and Push Docker Image
+        run:|
+          IMAGE_ID=ghcr.io/adonato2174-source/pearl-miner-5090
+          IMAGE_ID=$(echo $IMAGE_ID | tr '[A-Z]' '[a-z]')
+          
+          docker build . --file Dockerfile --tag $IMAGE_ID:latest
+          docker push $IMAGE_ID:latest
