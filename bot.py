@@ -20,12 +20,18 @@ KRYPTEX_POOL = "prl.kryptex.network:7048"
 TARGET_GPU = "RTX 5090"
 # =====================================================================
 
+# Global User-Agent Header to bypass security scraping protections
+BROWSER_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "application/json"
+}
+
 def get_live_5090_profitability():
     """Queries WhatToMine API to determine live hourly gross revenue for an RTX 5090."""
     wtm_url = "https://whattomine.com"
     
     try:
-        response = requests.get(wtm_url, timeout=10)
+        response = requests.get(wtm_url, headers=BROWSER_HEADERS, timeout=10)
         if response.status_code == 200:
             data = response.json()
             
@@ -38,6 +44,8 @@ def get_live_5090_profitability():
             if daily_revenue > 0:
                 return daily_revenue / 24.0
                 
+        else:
+            print(f"[{time.strftime('%X')}] WhatToMine sent status code {response.status_code}. Using fallback.")
     except Exception as error:
         print(f"[{time.strftime('%X')}] Warning: WhatToMine connection dropped ({error}). Using baseline fallback.")
     
@@ -59,7 +67,12 @@ def check_and_snipe():
 
     # 2. Interrogate the Vast.ai REST API for low-cost, single machine offers
     url = "https://vast.ai"
-    headers = {"Authorization": f"Bearer {VAST_API_KEY}"}
+    
+    # Combine authentication token and browser header configs
+    vast_headers = {
+        "Authorization": f"Bearer {VAST_API_KEY}",
+        **BROWSER_HEADERS
+    }
     
     query_payload = {
         "q": json.dumps({
@@ -73,11 +86,15 @@ def check_and_snipe():
     }
     
     try:
-        response = requests.get(url, headers=headers, params=query_payload, timeout=10)
+        response = requests.get(url, headers=vast_headers, params=query_payload, timeout=10)
         
         if response.status_code == 401:
             print("CRITICAL LOGICAL FAULT: Invalid VAST_API_KEY payload. Execution aborted.")
             sys.exit(1)
+            
+        if response.status_code != 200:
+            print(f"[{time.strftime('%X')}] Vast.ai marketplace API error (Status {response.status_code}).")
+            return
             
         offers = response.json().get("offers", [])
         if not offers:
@@ -85,7 +102,7 @@ def check_and_snipe():
             return
             
         # Target the lowest market quote matching our query structure
-        target_machine = offers
+        target_machine = offers[0]
         market_rate = float(target_machine.get("dph_total", 999.0))
         machine_id = target_machine.get("id")
         
@@ -105,7 +122,7 @@ def check_and_snipe():
                 }
             }
             
-            rent_response = requests.put(rent_url, headers=headers, json=rent_payload, timeout=10)
+            rent_response = requests.put(rent_url, headers=vast_headers, json=rent_payload, timeout=10)
             if rent_response.status_code == 200:
                 print("SUCCESS: Compute lease confirmed. Sleeping for 5 mins to lock configuration...")
                 time.sleep(300)
@@ -119,11 +136,11 @@ def check_and_snipe():
 
 if __name__ == "__main__":
     if VAST_API_KEY == "YOUR_ACTUAL_VAST_API_KEY_HERE":
-        print("ABORT: Paste your secure Vast.ai API Token into line 8 of this script.")
+        print("ABORT: Paste your secure Vast.ai API Token into line 9 of this script.")
         sys.exit(1)
         
     print("=======================================================")
-    print("        DYNAMIC COMPUTE ARBITRAGE DAEMON v2.0")
+    print("        DYNAMIC COMPUTE ARBITRAGE DAEMON v3.0")
     print(f"Target Model:  {TARGET_GPU}")
     print(f"Payout Destination Account ID: {KRYPTEX_ID}")
     print("=======================================================")
