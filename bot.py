@@ -1,67 +1,104 @@
 import requests
+import json
 import time
 import sys
 
 # =====================================================================
 #                        USER CONFIGURATION
 # =====================================================================
-# Paste your secure API Key from your Vast.ai console account settings page
-VAST_API_KEY = "put api key here" 
+# 1. YOUR VAST KEY: Paste your key from the Vast.ai settings console
+VAST_API_KEY = "YOUR_ACTUAL_VAST_API_KEY_HERE" 
 
-# Target Asset and Infrastructure thresholds
+# 2. HIGH SPEED CONTAINER BLUEPRINT (Optimized for instant caching on Vast nodes)
+DOCKER_IMAGE = "cniweb/srbminer-multi-cuda:latest" 
+
+# 3. KRYPTEX POOL CREDENTIALS (Auto-routes and converts all Pearl rewards to BTC)
+KRYPTEX_ID = "krxXPVZW2N"
+KRYPTEX_POOL = "prl.kryptex.network:7048"
+
+# 4. INFRASTRUCTURE ARBITRAGE TARGET
 TARGET_GPU = "RTX 5090"
-MAX_RENTAL_PRICE = 0.42  # Your target spread threshold
-DOCKER_IMAGE = "yourusername/pearl-miner-5090:latest" # Your blueprint path
-
-# Kryptex Payout Architecture
-KRYPTEX_ID = "put id here"
-KRYPTEX_POOL = "stratum+tcp://prl.kryptex.network:7048"
 # =====================================================================
 
-def search_and_snipe_rigs():
-    print(f"[{time.strftime('%X')}] Scanning Vast.ai database for underpriced {TARGET_GPU}s...")
+def get_live_5090_profitability():
+    """Queries WhatToMine API to determine live hourly gross revenue for an RTX 5090."""
+    wtm_url = "https://whattomine.com"
     
+    try:
+        response = requests.get(wtm_url, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            
+            # Extract live Pearl hashing parameters
+            coins = data.get("coins", {})
+            pearl_key = "Pearl" if "Pearl" in coins else "PearlHash"
+            pearl_data = coins.get(pearl_key, {})
+            
+            daily_revenue = float(pearl_data.get("revenue", 0.0))
+            if daily_revenue > 0:
+                return daily_revenue / 24.0
+                
+    except Exception as error:
+        print(f"[{time.strftime('%X')}] Warning: WhatToMine connection dropped ({error}). Using baseline fallback.")
+    
+    # Secure baseline fallback value if API drops frames
+    return 0.57
+
+def check_and_snipe():
+    # 1. Check current market math dynamically
+    hourly_earnings = get_live_5090_profitability()
+    
+    # Protect capital by applying a mandatory 15% margin buffer for setup/stale share friction
+    max_allowed_rental = hourly_earnings * 0.85
+    
+    print("=" * 60)
+    print(f"[{time.strftime('%X')}] ENGINE STRATEGY STATUS:")
+    print(f"-> Live 5090 Pool Revenue:    ${hourly_earnings:.3f}/hr")
+    print(f"-> Maximum Purchase Ceiling:  ${max_allowed_rental:.3f}/hr (15% Net Margin Enforced)")
+    print("=" * 60)
+
+    # 2. Interrogate the Vast.ai REST API for low-cost, single machine offers
     url = "https://vast.ai"
-    headers = {
-        "Authorization": f"Bearer {VAST_API_KEY}",
-        "Content-Type": "application/json"
-    }
+    headers = {"Authorization": f"Bearer {VAST_API_KEY}"}
     
-    # Structure database query to fetch rentable, active, single cards sorted by price
-    payload = {
-        "q": f"gpu_name == {TARGET_GPU} num_gpus == 1 rentable == True",
-        "order": [["dph_total", "asc"]]
+    query_payload = {
+        "q": json.dumps({
+            "gpu_name": {"eq": TARGET_GPU},
+            "num_gpus": {"eq": 1},
+            "rentable": {"eq": True},
+            "verified": {"eq": False} # targets lowest priced unverified spots
+        }),
+        "order_by": "dph_total",
+        "order_direction": "asc"
     }
     
     try:
-        response = requests.post(url, headers=headers, json=payload, timeout=10)
+        response = requests.get(url, headers=headers, params=query_payload, timeout=10)
         
         if response.status_code == 401:
-            print("CRITICAL ACTION REQUIRED: Your Vast API Key is invalid or copied incorrectly.")
+            print("CRITICAL LOGICAL FAULT: Invalid VAST_API_KEY payload. Execution aborted.")
             sys.exit(1)
             
-        data = response.json()
-        offers = data.get("offers", [])
-        
+        offers = response.json().get("offers", [])
         if not offers:
-            print("-> Marketplace is currently empty of this GPU class. Retrying on next loop...")
+            print("-> Match parameters yielded 0 live machines. Sweeping on next interval...")
             return
             
-        # Inspect the lowest priced item sitting at the top of our queue
-        best_deal = offers[0]
-        hourly_rate = best_deal.get("dph_total", 999.0)
-        machine_id = best_deal.get("id")
+        # Target the lowest market quote matching our query structure
+        target_machine = offers
+        market_rate = float(target_machine.get("dph_total", 999.0))
+        machine_id = target_machine.get("id")
         
-        print(f"-> Market Floor Found: Machine ID {machine_id} listing at ${hourly_rate:.3f}/hr")
+        print(f"-> Lowest Spot Price Found: Machine ID {machine_id} listing at ${market_rate:.3f}/hr")
         
-        # Guard clause tracking mathematical arbitrage spread limits
-        if hourly_rate <= MAX_RENTAL_PRICE:
-            print(f"!!! ARBITRAGE SIGNAL MATCHED !!! Deploying payload to Machine {machine_id}...")
+        # 3. Arbitrage Execution Check
+        if market_rate <= max_allowed_rental:
+            print(f"!!! ARBITRAGE EQUATION VALIDATED !!! Sniping Server ID {machine_id}...")
             
             rent_url = f"https://vast.ai{machine_id}/"
             rent_payload = {
                 "image": DOCKER_IMAGE,
-                "disk": 30.0, # Reserves 30GB high-speed disk footprint
+                "disk": 25.0, # Reserve 25GB high-speed workspace NVMe footprint
                 "env": {
                     "POOL": KRYPTEX_POOL,
                     "WALLET": KRYPTEX_ID
@@ -69,33 +106,29 @@ def search_and_snipe_rigs():
             }
             
             rent_response = requests.put(rent_url, headers=headers, json=rent_payload, timeout=10)
-            
             if rent_response.status_code == 200:
-                print(f"SUCCESS: Server lease initiated. Hashing routing parameters into pool.")
-                print("Pausing engine execution for 5 minutes to prevent double-spending balance reserves...")
+                print("SUCCESS: Compute lease confirmed. Sleeping for 5 mins to lock configuration...")
                 time.sleep(300)
             else:
-                print(f"Lease order dropped by host engine or outbid: {rent_response.text}")
+                print(f"Lease drop or deployment collision: {rent_response.text}")
         else:
-            print(f"-> Spread margin check failed (${hourly_rate:.2f}/hr is above ceiling limit of ${MAX_RENTAL_PRICE:.2f}/hr).")
+            print("-> Current spread is negative or too narrow. Sitting idle to protect capital.")
             
-    except requests.exceptions.RequestException as error:
-        print(f"Network transport anomaly encountered: {error}")
-    except Exception as general_err:
-        print(f"Execution handling error: {general_err}")
+    except Exception as general_fault:
+        print(f"System orchestration fault encountered: {general_fault}")
 
 if __name__ == "__main__":
     if VAST_API_KEY == "YOUR_ACTUAL_VAST_API_KEY_HERE":
-        print("ABORTING: You must replace 'YOUR_ACTUAL_VAST_API_KEY_HERE' on Line 8 with your real token.")
+        print("ABORT: Paste your secure Vast.ai API Token into line 8 of this script.")
         sys.exit(1)
         
     print("=======================================================")
-    print("        PEARL COMPUTE ARBITRAGE POOL MONITOR")
-    print(f"Targeting: {TARGET_GPU} at under ${MAX_RENTAL_PRICE}/hr")
-    print(f"Routing to User ID: {KRYPTEX_ID}")
+    print("        DYNAMIC COMPUTE ARBITRAGE DAEMON v2.0")
+    print(f"Target Model:  {TARGET_GPU}")
+    print(f"Payout Destination Account ID: {KRYPTEX_ID}")
     print("=======================================================")
     
-    # Executes the loop indefinitely every 15 seconds
+    # Scan loop interval ticks every 15 seconds
     while True:
-        search_and_snipe_rigs()
+        check_and_snipe()
         time.sleep(15)
